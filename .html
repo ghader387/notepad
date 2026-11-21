@@ -1,0 +1,956 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- متا تگ‌های لازم برای اجرای اپ‌مانند در Safari آیفون -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CodePad">
+<meta name="theme-color" content="#1e1e2e">
+<title>CodePad Pro</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<!-- Pyodide و SQL.js برای اجرای محلی (بدون نیاز به سرور) -->
+<script src="https://cdn.jsdelivr.net/pyodide/v0.25.1/full/pyodide.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/sql-wasm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html, body {
+  height:100%; width:100%; overflow:hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background:#1e1e2e; color:#cdd6f4;
+  position:fixed;
+  /* جلوگیری از انتخاب متن ناخواسته در iOS */
+  -webkit-user-select: none;
+  user-select: none;
+}
+/* اجازه انتخاب متن در ادیتور و خروجی */
+#code-input, #output-body, #preview-code-content {
+  -webkit-user-select: text;
+  user-select: text;
+}
+body { display:flex; flex-direction:column; }
+
+/* ============ HEADER ============ */
+header {
+  background:#181825; padding:10px 12px; display:flex; align-items:center; gap:6px;
+  border-bottom:1px solid #313244; padding-top:max(10px, env(safe-area-inset-top));
+  flex-wrap:wrap; flex-shrink:0; z-index:10;
+}
+header h1 { font-size:15px; color:#89b4fa; flex:1; min-width:60px; }
+button {
+  background:#313244; color:#cdd6f4; border:none; padding:7px 11px;
+  border-radius:8px; font-size:13px; cursor:pointer; font-family:inherit;
+  display:inline-flex; align-items:center; gap:4px; white-space:nowrap;
+  /* بزرگتر کردن ناحیه لمسی برای iOS */
+  min-height: 36px;
+}
+button:active { background:#45475a; }
+button.primary { background:#89b4fa; color:#1e1e2e; font-weight:bold; }
+button.danger { background:#f38ba8; color:#1e1e2e; }
+button.run { background:#a6e3a1; color:#1e1e2e; font-weight:bold; padding:7px 13px; }
+button.icon-only { padding:7px 9px; font-size:15px; }
+button.on { background:#89b4fa; color:#1e1e2e; }
+
+/* ============ LIST ============ */
+#list-view { display:flex; flex-direction:column; flex:1; overflow:hidden; }
+#search {
+  width:100%; padding:10px 14px; background:#313244; border:none;
+  color:#cdd6f4; font-size:15px; border-bottom:1px solid #45475a; flex-shrink:0;
+}
+#search::placeholder { color:#6c7086; }
+#list { flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding-bottom:80px; }
+.item { padding:14px 16px; border-bottom:1px solid #313244; cursor:pointer; }
+.item:active { background:#313244; }
+.item .title { font-size:15px; font-weight:600; margin-bottom:4px; }
+.item .meta { font-size:12px; color:#6c7086; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+.lang-badge { background:#45475a; color:#89b4fa; padding:2px 8px; border-radius:6px; font-size:11px; }
+.item .preview { font-size:12px; color:#9399b2; margin-top:6px; font-family:monospace;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; direction:ltr; text-align:left; }
+
+.fab {
+  position:fixed; bottom:calc(24px + env(safe-area-inset-bottom)); left:24px;
+  width:56px; height:56px; border-radius:50%;
+  background:#89b4fa; color:#1e1e2e; font-size:28px;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 4px 16px rgba(137,180,250,.4); border:none; z-index:100;
+}
+.fab:active { transform:scale(.95); }
+
+/* ============ EDITOR ============ */
+#editor-view { display:none; flex-direction:column; flex:1; overflow:hidden; }
+#editor-view.active { display:flex; }
+
+#editor-meta {
+  display:flex; gap:6px; padding:8px 10px; background:#181825;
+  border-bottom:1px solid #313244; flex-shrink:0; flex-wrap:wrap; align-items:center;
+}
+#title-input {
+  flex:1; min-width:80px; padding:7px 10px; background:#313244; border:none;
+  color:#cdd6f4; font-size:13px; border-radius:7px; font-family:inherit;
+}
+#lang-select {
+  padding:7px 8px; background:#313244; border:none; color:#cdd6f4;
+  font-size:12px; border-radius:7px; font-family:inherit; max-width:130px;
+}
+
+/* ============ SPLIT CONTAINER ============ */
+#split {
+  flex:1; display:flex; overflow:hidden; position:relative;
+  flex-direction: column; /* default: stack */
+}
+
+#editor-pane {
+  display:flex; flex-direction:column; overflow:hidden;
+  background:#1e1e2e; min-width:0; min-height:0;
+  flex: 1 1 auto;
+}
+#code-input {
+  flex:1; width:100%; padding:12px; background:#1e1e2e; border:none; color:#cdd6f4;
+  font-family:'SF Mono', Menlo, monospace; font-size:13px; line-height:1.55;
+  resize:none; outline:none; direction:ltr; text-align:left;
+  -webkit-text-size-adjust:100%; tab-size:2;
+  -webkit-overflow-scrolling:touch;
+}
+
+#preview-pane {
+  display:none; flex-direction:column; overflow:hidden;
+  background:#fff; min-width:0; min-height:0;
+  flex: 1 1 auto;
+}
+#preview-pane.active { display:flex; }
+
+#preview-toolbar {
+  background:#181825; padding:5px 8px; display:flex; gap:4px;
+  align-items:center; font-size:11px; color:#9399b2;
+  flex-shrink:0; border-bottom:1px solid #313244;
+}
+#preview-toolbar .url {
+  flex:1; background:#313244; padding:3px 8px; border-radius:5px;
+  color:#89b4fa; font-family:monospace; font-size:10px;
+  direction:ltr; text-align:left; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; min-width:40px;
+}
+
+#preview-content {
+  flex:1; overflow:auto; background:#fff; color:#222;
+  -webkit-overflow-scrolling:touch; position:relative;
+}
+#preview-frame { width:100%; height:100%; border:none; background:#fff; display:none; }
+#preview-frame.active { display:block; }
+#preview-html { padding:14px; }
+#preview-html.markdown-content h1,
+#preview-html.markdown-content h2,
+#preview-html.markdown-content h3 { margin:12px 0 8px; color:#1e1e2e; }
+#preview-html.markdown-content p { margin:8px 0; line-height:1.6; }
+#preview-html.markdown-content code { background:#eee; padding:2px 6px; border-radius:4px; font-size:.9em; }
+#preview-html.markdown-content pre { background:#f4f4f4; padding:10px; border-radius:6px; overflow:auto; }
+#preview-code pre { margin:0; padding:12px; background:#282a36; min-height:100%; }
+#preview-code code { font-family:'SF Mono',Menlo,monospace; font-size:12px; line-height:1.55; }
+
+/* Terminal inside preview */
+#output-terminal {
+  display:none; flex-direction:column; background:#11111b;
+  border-top:2px solid #a6e3a1; max-height:40%; min-height:60px; flex-shrink:0;
+}
+#output-terminal.active { display:flex; }
+#output-header {
+  background:#181825; padding:3px 8px; font-size:10px;
+  display:flex; justify-content:space-between; align-items:center;
+  color:#a6e3a1; flex-shrink:0;
+}
+#output-body {
+  flex:1; overflow:auto; padding:8px 10px; font-family:'SF Mono',Menlo,monospace;
+  font-size:11px; color:#cdd6f4; white-space:pre-wrap; word-break:break-word;
+  direction:ltr; text-align:left; -webkit-overflow-scrolling:touch;
+}
+#output-body .err { color:#f38ba8; }
+#output-body .ok { color:#a6e3a1; }
+#output-body .info { color:#89b4fa; }
+#output-body .warn { color:#f9e2af; }
+
+/* Divider */
+#split-divider {
+  background:#313244; flex-shrink:0; position:relative; display:none;
+  touch-action:none;
+}
+#split-divider.active { display:block; }
+#split-divider::after {
+  content:''; position:absolute; top:50%; left:50%;
+  transform:translate(-50%,-50%);
+  background:#89b4fa; border-radius:2px;
+}
+#split-divider.horizontal { width:8px; height:100%; cursor:col-resize; }
+#split-divider.horizontal::after { width:2px; height:40px; }
+#split-divider.vertical { width:100%; height:8px; cursor:row-resize; }
+#split-divider.vertical::after { width:40px; height:2px; }
+#split-divider:active { background:#45475a; }
+
+/* Toast */
+#toast {
+  position:fixed; bottom:100px; left:50%; transform:translateX(-50%) translateY(20px);
+  background:#89b4fa; color:#1e1e2e; padding:10px 20px; border-radius:24px;
+  font-size:14px; font-weight:600; opacity:0; transition:.3s; pointer-events:none;
+  z-index:1000; max-width:90%; text-align:center;
+}
+#toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+/* Loading */
+#loading-overlay {
+  position:fixed; inset:0; background:rgba(30,30,46,.92); display:none;
+  align-items:center; justify-content:center; z-index:2000;
+  flex-direction:column; gap:16px; color:#89b4fa; font-size:14px; padding:20px;
+}
+#loading-overlay.active { display:flex; }
+.spinner {
+  width:40px; height:40px; border:3px solid #313244; border-top-color:#89b4fa;
+  border-radius:50%; animation:spin 1s linear infinite;
+}
+@keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- ============ LIST VIEW ============ -->
+<div id="list-view">
+  <header>
+    <h1>📝 CodePad Pro</h1>
+    <button onclick="exportAll()" class="icon-only" title="بکاپ">📦</button>
+    <button onclick="importFile()" class="icon-only" title="بازیابی">📥</button>
+  </header>
+  <input id="search" placeholder="جستجو در کدها..." oninput="renderList()">
+  <div id="list"></div>
+  <button class="fab" onclick="newNote()">+</button>
+</div>
+
+<!-- ============ EDITOR VIEW ============ -->
+<div id="editor-view">
+  <header style="padding:8px 10px;">
+    <button onclick="closeEditor()" class="icon-only">←</button>
+    <button class="primary" onclick="saveNote()">💾</button>
+    <button class="run" id="run-btn" onclick="runCode()">▶ اجرا</button>
+    <button class="icon-only" id="layout-btn" onclick="cycleLayout()" title="تغییر چیدمان">⛶</button>
+    <button class="icon-only" onclick="copyCode()" title="کپی">📋</button>
+    <button class="icon-only" onclick="exportHTML()" title="خروجی">⬇️</button>
+    <button class="danger icon-only" onclick="deleteNote()" title="حذف">🗑</button>
+  </header>
+
+  <div id="editor-meta">
+    <input id="title-input" placeholder="عنوان کد...">
+    <select id="lang-select" onchange="onLangChange()">
+      <optgroup label="🌐 وب (زنده)">
+        <option value="html">HTML</option>
+        <option value="javascript">JavaScript</option>
+        <option value="css">CSS</option>
+      </optgroup>
+      <optgroup label="🐍 اجرایی (محلی)">
+        <option value="python">Python</option>
+        <option value="sql">SQL</option>
+        <option value="markdown">Markdown</option>
+        <option value="json">JSON</option>
+      </optgroup>
+      <optgroup label="☁️ اجرایی (آنلاین - Judge0)">
+        <option value="php">PHP</option>
+        <option value="java">Java</option>
+        <option value="cpp">C++</option>
+        <option value="csharp">C#</option>
+        <option value="go">Go</option>
+        <option value="rust">Rust</option>
+        <option value="bash">Bash</option>
+        <option value="typescript">TypeScript</option>
+        <option value="ruby">Ruby</option>
+        <option value="swift">Swift</option>
+        <option value="kotlin">Kotlin</option>
+      </optgroup>
+      <optgroup label="⚠️ فقط هایلایت">
+        <option value="xml">XML</option>
+        <option value="plaintext">متنی</option>
+      </optgroup>
+    </select>
+  </div>
+
+  <div id="split">
+    <div id="editor-pane">
+      <textarea id="code-input" placeholder="کدت را اینجا بنویس..." spellcheck="false"></textarea>
+    </div>
+
+    <div id="split-divider" class="vertical"></div>
+
+    <div id="preview-pane">
+      <div id="preview-toolbar">
+        <span id="preview-mode-label">🌐</span>
+        <div class="url" id="preview-url">about:blank</div>
+        <button onclick="runCode()" style="padding:2px 8px;font-size:11px;">▶</button>
+      </div>
+      <div id="preview-content">
+        <iframe id="preview-frame" sandbox="allow-scripts allow-modals allow-forms allow-popups allow-same-origin"></iframe>
+        <div id="preview-html" style="display:none;"></div>
+        <div id="preview-code" style="display:none;">
+          <pre><code id="preview-code-content"></code></pre>
+        </div>
+      </div>
+      <div id="output-terminal">
+        <div id="output-header">
+          <span>📟 خروجی</span>
+          <button onclick="clearOutput()" style="padding:2px 6px;font-size:10px;">✕</button>
+        </div>
+        <div id="output-body"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <div id="loading-text">در حال آماده‌سازی...</div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ============ CONSTANTS ============
+const STORAGE_KEY = 'codepad_notes_v5';
+const LAYOUT_KEY = 'codepad_layout_v5';
+const RATIO_KEY = 'codepad_ratio_v5';
+
+// ============ STATE ============
+let notes = [];
+let currentId = null;
+let currentRun = 0;
+let layoutMode = localStorage.getItem(LAYOUT_KEY) || 'auto';
+let splitRatio = parseFloat(localStorage.getItem(RATIO_KEY)) || 0.5;
+
+// ============ DATA ============
+function loadNotes() {
+  try { notes = JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch(e) { notes = []; }
+  if (!notes.length) {
+    try {
+      const old = JSON.parse(localStorage.getItem('codepad_notes_v4'))
+              || JSON.parse(localStorage.getItem('codepad_notes_v3'))
+              || JSON.parse(localStorage.getItem('codepad_notes_v2'))
+              || JSON.parse(localStorage.getItem('codepad_notes_v1'));
+      if (Array.isArray(old) && old.length) { notes = old; persist(); }
+    } catch(e) {}
+  }
+}
+function persist() { localStorage.setItem(STORAGE_KEY, JSON.stringify(notes)); }
+function genId() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+function escapeHTML(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ============ LIST ============
+function renderList() {
+  const q = (document.getElementById('search').value || '').toLowerCase();
+  const list = document.getElementById('list');
+  const filtered = notes
+    .filter(n => !q || n.title.toLowerCase().includes(q) || n.code.toLowerCase().includes(q))
+    .sort((a, b) => b.updated - a.updated);
+  if (!filtered.length) {
+    list.innerHTML = '<div style="padding:40px 20px;text-align:center;color:#6c7086;font-size:14px;">' +
+      (notes.length ? 'نتیجه‌ای پیدا نشد' : 'هنوز کدی نداری!<br>روی + بزن تا شروع کنی') + '</div>';
+    return;
+  }
+  list.innerHTML = filtered.map(n => {
+    const preview = (n.code || '').split('\n').slice(0, 2).join(' ').slice(0, 60);
+    const date = new Date(n.updated).toLocaleDateString('fa-IR');
+    return `<div class="item" onclick="openNote('${n.id}')">
+      <div class="title">${escapeHTML(n.title || 'بدون عنوان')}</div>
+      <div class="meta"><span class="lang-badge">${n.lang}</span><span>${date}</span><span>${(n.code || '').length} کاراکتر</span></div>
+      <div class="preview">${escapeHTML(preview)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ============ EDITOR ============
+function newNote() {
+  const n = { id: genId(), title: '', lang: 'html', code: '', created: Date.now(), updated: Date.now() };
+  notes.push(n); persist(); openNote(n.id);
+}
+function openNote(id) {
+  currentId = id;
+  const n = notes.find(x => x.id === id);
+  if (!n) return;
+  document.getElementById('title-input').value = n.title;
+  document.getElementById('lang-select').value = n.lang;
+  document.getElementById('code-input').value = n.code;
+  document.getElementById('list-view').style.display = 'none';
+  document.getElementById('editor-view').classList.add('active');
+  resetPreview();
+  applyLayout();
+}
+function resetPreview() {
+  document.getElementById('preview-pane').classList.remove('active');
+  document.getElementById('split-divider').classList.remove('active');
+  document.getElementById('output-terminal').classList.remove('active');
+  const f = document.getElementById('preview-frame');
+  f.style.display = 'none';
+  f.srcdoc = '';
+  document.getElementById('preview-html').style.display = 'none';
+  document.getElementById('preview-code').style.display = 'none';
+}
+function closeEditor() {
+  saveNote(false); currentId = null;
+  document.getElementById('editor-view').classList.remove('active');
+  document.getElementById('list-view').style.display = 'flex';
+  renderList();
+}
+function saveNote(showToast = true) {
+  const n = notes.find(x => x.id === currentId);
+  if (!n) return;
+  n.title = document.getElementById('title-input').value.trim() || 'بدون عنوان';
+  n.lang = document.getElementById('lang-select').value;
+  n.code = document.getElementById('code-input').value;
+  n.updated = Date.now();
+  persist();
+  if (showToast) toast('✅ ذخیره شد');
+}
+function deleteNote() {
+  if (!confirm('این کد حذف شود؟')) return;
+  notes = notes.filter(x => x.id !== currentId);
+  persist(); closeEditor(); toast('🗑 حذف شد');
+}
+function onLangChange() {
+  const n = notes.find(x => x.id === currentId);
+  if (n) { n.lang = document.getElementById('lang-select').value; n.updated = Date.now(); persist(); }
+}
+
+// ============ LAYOUT ENGINE ============
+function resolveLayout() {
+  if (layoutMode === 'side') return 'side';
+  if (layoutMode === 'stack') return 'stack';
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const isLandscape = w > h;
+  const isWide = w >= 700;
+  return (isWide || isLandscape) ? 'side' : 'stack';
+}
+
+function applyLayout() {
+  const split = document.getElementById('split');
+  const editorPane = document.getElementById('editor-pane');
+  const previewPane = document.getElementById('preview-pane');
+  const divider = document.getElementById('split-divider');
+  const isPreviewOn = previewPane.classList.contains('active');
+  const resolved = resolveLayout();
+
+  editorPane.style.flex = '';
+  editorPane.style.width = '';
+  editorPane.style.height = '';
+  previewPane.style.flex = '';
+  previewPane.style.width = '';
+  previewPane.style.height = '';
+
+  if (resolved === 'side') {
+    split.style.flexDirection = 'row';
+    divider.className = 'active horizontal';
+    editorPane.style.flex = 'none';
+    editorPane.style.width = (splitRatio * 100) + '%';
+    editorPane.style.height = '100%';
+    if (isPreviewOn) {
+      previewPane.style.flex = '1';
+      previewPane.style.height = '100%';
+    }
+  } else {
+    split.style.flexDirection = 'column';
+    divider.className = 'active vertical';
+    editorPane.style.flex = 'none';
+    editorPane.style.height = (splitRatio * 100) + '%';
+    editorPane.style.width = '100%';
+    if (isPreviewOn) {
+      previewPane.style.flex = '1';
+      previewPane.style.width = '100%';
+    }
+  }
+
+  const btn = document.getElementById('layout-btn');
+  btn.classList.toggle('on', layoutMode !== 'auto');
+  btn.textContent = layoutMode === 'side' ? '⬌' : (layoutMode === 'stack' ? '⬍' : '⛶');
+  btn.title = ({auto:'خودکار', side:'کنار هم', stack:'زیر هم'})[layoutMode];
+}
+
+function cycleLayout() {
+  const order = ['auto', 'side', 'stack'];
+  const idx = order.indexOf(layoutMode);
+  layoutMode = order[(idx + 1) % order.length];
+  localStorage.setItem(LAYOUT_KEY, layoutMode);
+  toast('چیدمان: ' + ({auto:'خودکار', side:'⬌ کنار هم', stack:'⬍ زیر هم'})[layoutMode]);
+  applyLayout();
+  setTimeout(applyLayout, 50);
+}
+
+let resizeTimer;
+window.addEventListener('resize', () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(applyLayout, 150);
+});
+window.addEventListener('orientationchange', () => {
+  setTimeout(applyLayout, 300);
+  setTimeout(applyLayout, 600);
+});
+
+// ============ DIVIDER DRAG ============
+(function() {
+  const divider = document.getElementById('split-divider');
+  const split = document.getElementById('split');
+  const editorPane = document.getElementById('editor-pane');
+  let isDragging = false;
+
+  function startDrag(e) {
+    if (!divider.classList.contains('active')) return;
+    isDragging = true;
+    e.preventDefault();
+  }
+  function moveDrag(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    const rect = split.getBoundingClientRect();
+    const isRow = split.style.flexDirection === 'row';
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    let ratio;
+    if (isRow) {
+      ratio = (rect.right - clientX) / rect.width;
+    } else {
+      ratio = (clientY - rect.top) / rect.height;
+    }
+    ratio = Math.max(0.15, Math.min(0.85, ratio));
+    splitRatio = ratio;
+    localStorage.setItem(RATIO_KEY, ratio);
+
+    editorPane.style.flex = 'none';
+    if (isRow) editorPane.style.width = (ratio * 100) + '%';
+    else editorPane.style.height = (ratio * 100) + '%';
+  }
+  function endDrag() { isDragging = false; }
+
+  divider.addEventListener('touchstart', startDrag, {passive:false});
+  divider.addEventListener('mousedown', startDrag);
+  document.addEventListener('touchmove', moveDrag, {passive:false});
+  document.addEventListener('mousemove', moveDrag);
+  document.addEventListener('touchend', endDrag);
+  document.addEventListener('mouseup', endDrag);
+})();
+
+// ============ RUN ============
+async function runCode() {
+  const code = document.getElementById('code-input').value;
+  const lang = document.getElementById('lang-select').value;
+  const runId = ++currentRun;
+
+  document.getElementById('preview-pane').classList.add('active');
+  document.getElementById('split-divider').classList.add('active');
+  document.getElementById('output-terminal').classList.remove('active');
+  clearOutput();
+  applyLayout();
+  setTimeout(applyLayout, 30);
+
+  const frame = document.getElementById('preview-frame');
+  const htmlPrev = document.getElementById('preview-html');
+  const codePrev = document.getElementById('preview-code');
+  const content = document.getElementById('preview-content');
+  const url = document.getElementById('preview-url');
+
+  frame.style.display = 'none';
+  htmlPrev.style.display = 'none';
+  codePrev.style.display = 'none';
+  htmlPrev.innerHTML = '';
+  htmlPrev.className = '';
+  content.className = '';
+
+  // 1. زبان‌های وب (محلی)
+  if (lang === 'html' || lang === 'xml') {
+    frame.style.display = 'block';
+    url.textContent = 'html';
+    frame.srcdoc = code || '<body style="font-family:sans-serif;color:#888;padding:20px;text-align:center;">کدی برای نمایش نیست</body>';
+    return;
+  }
+  if (lang === 'javascript') {
+    frame.style.display = 'block';
+    url.textContent = 'js';
+    frame.srcdoc = buildJSWrapper(code);
+    return;
+  }
+  if (lang === 'css') {
+    frame.style.display = 'block';
+    url.textContent = 'css';
+    frame.srcdoc = buildCSSWrapper(code);
+    return;
+  }
+  if (lang === 'markdown') {
+    htmlPrev.style.display = 'block';
+    htmlPrev.className = 'markdown-content';
+    url.textContent = 'markdown';
+    try { htmlPrev.innerHTML = marked.parse(code || '*چیزی برای نمایش نیست*'); }
+    catch(e) { htmlPrev.innerHTML = '<p style="color:red;">خطا: '+escapeHTML(e.message)+'</p>'; }
+    return;
+  }
+  if (lang === 'json') {
+    codePrev.style.display = 'block';
+    url.textContent = 'json';
+    const el = document.getElementById('preview-code-content');
+    try {
+      const parsed = JSON.parse(code || '{}');
+      el.textContent = JSON.stringify(parsed, null, 2);
+      el.className = 'language-json';
+      hljs.highlightElement(el);
+      showOutput('✅ JSON معتبر', 'ok');
+    } catch(e) {
+      el.textContent = code || '// خالی';
+      el.className = 'language-json';
+      hljs.highlightElement(el);
+      showOutput('❌ JSON: ' + e.message, 'err');
+    }
+    return;
+  }
+
+  // 2. زبان‌های محلی (Pyodide / SQL.js)
+  if (lang === 'python') {
+    codePrev.style.display = 'block';
+    url.textContent = 'python (local)';
+    const el = document.getElementById('preview-code-content');
+    el.textContent = code || '# خالی';
+    el.className = 'language-python';
+    hljs.highlightElement(el);
+    document.getElementById('output-terminal').classList.add('active');
+    await runPython(code, runId);
+    return;
+  }
+  if (lang === 'sql') {
+    htmlPrev.style.display = 'block';
+    url.textContent = 'sqlite (local)';
+    document.getElementById('output-terminal').classList.add('active');
+    await runSQL(code, runId, htmlPrev);
+    return;
+  }
+
+  // 3. زبان‌های آنلاین (Judge0)
+  const judge0Langs = {
+    'php': 68, 'java': 62, 'cpp': 54, 'csharp': 51,
+    'go': 60, 'rust': 73, 'bash': 46, 'typescript': 74,
+    'ruby': 72, 'swift': 83, 'kotlin': 78
+  };
+
+  if (judge0Langs[lang]) {
+    codePrev.style.display = 'block';
+    url.textContent = 'judge0:' + lang;
+    const el = document.getElementById('preview-code-content');
+    el.textContent = code || '// خالی';
+    el.className = 'language-' + lang;
+    hljs.highlightElement(el);
+    document.getElementById('output-terminal').classList.add('active');
+    await runViaJudge0(code, judge0Langs[lang], runId);
+    return;
+  }
+
+  // 4. بقیه
+  codePrev.style.display = 'block';
+  url.textContent = 'highlight';
+  const el = document.getElementById('preview-code-content');
+  el.textContent = code || '// خالی';
+  el.className = 'language-' + lang;
+  try { hljs.highlightElement(el); } catch(e) {}
+  showOutput('ℹ️ ' + lang + ' در مرورگر یا سرور اجرا نمی‌شود — فقط هایلایت.', 'info');
+  document.getElementById('output-terminal').classList.add('active');
+}
+
+// ============ JUDGE0 EXECUTION ============
+async function runViaJudge0(code, langId, runId) {
+  showOutput('⏳ ارسال به سرور Judge0...', 'info');
+
+  try {
+    // مرحله ۱: ارسال کد
+    const submitResp = await fetch('https://ce.judge0.com/submissions?base64_encoded=true', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        source_code: btoa(unescape(encodeURIComponent(code))), // Base64 encode با پشتیبانی UTF-8
+        language_id: langId,
+        stdin: '',
+        expected_output: null
+      })
+    });
+
+    if (runId !== currentRun) return;
+
+    if (!submitResp.ok) {
+      const errText = await submitResp.text();
+      showOutput('❌ خطای Judge0 (' + submitResp.status + '): ' + errText, 'err');
+      return;
+    }
+
+    const submitData = await submitResp.json();
+    const token = submitData.token;
+
+    if (!token) {
+      showOutput('❌ توکن دریافت نشد.', 'err');
+      return;
+    }
+
+    showOutput('🔄 در حال اجرا...', 'info');
+
+    // مرحله ۲: Polling برای گرفتن نتیجه
+    let attempts = 0;
+    const maxAttempts = 20;
+
+    while (attempts < maxAttempts) {
+      if (runId !== currentRun) return;
+      await new Promise(r => setTimeout(r, 1000));
+      attempts++;
+
+      const pollResp = await fetch('https://ce.judge0.com/submissions/' + token + '?base64_encoded=true');
+      if (!pollResp.ok) continue;
+
+      const pollData = await pollResp.json();
+
+      // status.id: 1=In Queue, 2=Processing, >2=Done
+      if (pollData.status && pollData.status.id > 2) {
+        // نمایش خروجی
+        if (pollData.stdout) {
+          const decoded = decodeURIComponent(escape(atob(pollData.stdout)));
+          showOutput(decoded, 'ok');
+        }
+        if (pollData.stderr) {
+          const decoded = decodeURIComponent(escape(atob(pollData.stderr)));
+          showOutput(decoded, 'err');
+        }
+        if (pollData.compile_output) {
+          const decoded = decodeURIComponent(escape(atob(pollData.compile_output)));
+          showOutput('🔧 خطای کامپایل:\n' + decoded, 'err');
+        }
+        if (!pollData.stdout && !pollData.stderr && !pollData.compile_output) {
+          showOutput('(بدون خروجی — اجرا کامل شد)', 'info');
+        }
+        if (pollData.status.id !== 3) {
+          showOutput('⚠️ وضعیت: ' + pollData.status.description, 'warn');
+        }
+        return;
+      }
+    }
+    showOutput('⏰ زمان انتظار تمام شد. نتیجه‌ای دریافت نشد.', 'warn');
+  } catch (e) {
+    if (runId !== currentRun) return;
+    showOutput('❌ خطای شبکه: ' + e.message, 'err');
+    showOutput('💡 احتمالاً CORS یا سرور در دسترس نیست. اینترنت را بررسی کن.', 'info');
+  }
+}
+
+// ============ PYTHON (LOCAL) ============
+let pyodideReady = null;
+async function ensurePyodide() {
+  if (pyodideReady) return pyodideReady;
+  showLoading('بارگذاری Python...');
+  pyodideReady = loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.25.1/full/' });
+  try { await pyodideReady; hideLoading(); }
+  catch(e) { hideLoading(); pyodideReady = null; throw e; }
+  return pyodideReady;
+}
+async function runPython(code, runId) {
+  try {
+    const py = await ensurePyodide();
+    if (runId !== currentRun) return;
+    await py.runPythonAsync('import sys, io\n_buf = io.StringIO()\n_old = sys.stdout\nsys.stdout = _buf\n');
+    let result = '';
+    try {
+      const ret = await py.runPythonAsync(code);
+      result = py.runPython('_buf.getvalue()');
+      if (ret !== undefined && ret !== null) result += String(ret);
+    } catch(e) {
+      result = py.runPython('_buf.getvalue()');
+      if (result) showOutput(result, '');
+      showOutput('❌ ' + e.message, 'err');
+      return;
+    }
+    showOutput(result || '(بدون خروجی)', 'ok');
+  } catch(e) { showOutput('❌ Python: ' + e.message, 'err'); }
+}
+
+// ============ SQL (LOCAL) ============
+let sqlReady = null;
+async function ensureSQL() {
+  if (sqlReady) return sqlReady;
+  showLoading('بارگذاری SQLite...');
+  sqlReady = initSqlJs({ locateFile: f => 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.2/' + f });
+  await sqlReady; hideLoading(); return sqlReady;
+}
+async function runSQL(code, runId, container) {
+  try {
+    const SQL = await ensureSQL();
+    if (runId !== currentRun) return;
+    const db = new SQL.Database();
+    let output = '';
+    for (const q of splitSQL(code)) {
+      if (!q.trim()) continue;
+      try {
+        const res = db.exec(q);
+        if (res.length) res.forEach(t => { output += renderTable(t) + '\n'; });
+        else output += '✅ اجرا شد\n';
+      } catch(e) { output += '❌ ' + e.message + '\n'; }
+    }
+    container.innerHTML = '<pre style="padding:12px;background:#282a36;color:#cdd6f4;font-family:monospace;font-size:11px;overflow:auto;margin:0;">' +
+      escapeHTML(output || '(بدون خروجی)') + '</pre>';
+    db.close();
+    showOutput('✅ SQL اجرا شد', 'ok');
+  } catch(e) { showOutput('❌ SQL: ' + e.message, 'err'); }
+}
+function splitSQL(code) {
+  const qs = []; let cur = '', inStr = false, quote = '';
+  for (let i = 0; i < code.length; i++) {
+    const c = code[i];
+    if (inStr) { cur += c; if (c === quote) inStr = false; }
+    else if (c === "'" || c === '"' || c === '`') { inStr = true; quote = c; cur += c; }
+    else if (c === ';') { qs.push(cur); cur = ''; }
+    else cur += c;
+  }
+  if (cur.trim()) qs.push(cur);
+  return qs;
+}
+function renderTable(t) {
+  let out = '';
+  if (t.columns) out += t.columns.join(' | ') + '\n';
+  out += '-'.repeat(30) + '\n';
+  if (t.values) t.values.forEach(r => { out += r.map(v => v === null ? 'NULL' : v).join(' | ') + '\n'; });
+  return out;
+}
+
+// ============ OUTPUT ============
+function showOutput(text, cls) {
+  const body = document.getElementById('output-body');
+  document.getElementById('output-terminal').classList.add('active');
+  const d = document.createElement('div');
+  d.className = cls || '';
+  d.textContent = text;
+  body.appendChild(d);
+  body.scrollTop = body.scrollHeight;
+}
+function clearOutput() { document.getElementById('output-body').innerHTML = ''; }
+function showLoading(text) {
+  document.getElementById('loading-text').textContent = text || 'در حال آماده‌سازی...';
+  document.getElementById('loading-overlay').classList.add('active');
+}
+function hideLoading() { document.getElementById('loading-overlay').classList.remove('active'); }
+
+// ============ WRAPPERS ============
+function buildJSWrapper(code) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+body{font-family:system-ui,sans-serif;padding:16px;background:#fff;color:#222;margin:0}
+</style></head><body>
+<div id="__app"></div>
+<script>
+try { ${code} } catch(e) { document.getElementById('__app').innerHTML = '<div style="color:#f00;padding:10px;border:1px solid #f00;border-radius:6px;">Error: ' + e.message + '</div>'; }
+<\/script>
+</body></html>`;
+}
+function buildCSSWrapper(code) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8">
+<style>body{padding:16px;font-family:system-ui,sans-serif;background:#fafafa;margin:0}
+.demo{background:#fff;padding:16px;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08)}</style>
+<style>${code}</style></head><body>
+<div class="demo">
+<h2>نمونه CSS</h2>
+<p>پاراگراف نمونه</p>
+<button>دکمه</button> <a href="#">لینک</a>
+<div class="box" style="margin-top:10px;padding:12px;background:#e0e7ff;border-radius:6px;">div نمونه</div>
+</div></body></html>`;
+}
+
+// ============ ACTIONS ============
+function copyCode() {
+  const code = document.getElementById('code-input').value;
+  navigator.clipboard.writeText(code).then(() => toast('📋 کپی شد')).catch(() => {
+    const ta = document.createElement('textarea'); ta.value = code;
+    document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+    ta.remove(); toast('📋 کپی شد');
+  });
+}
+function exportHTML() {
+  const title = document.getElementById('title-input').value || 'Snippet';
+  const lang = document.getElementById('lang-select').value;
+  const code = document.getElementById('code-input').value;
+  if (lang === 'html' || lang === 'xml') {
+    downloadFile(`${title.replace(/\s+/g,'_')}.html`,
+      `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>${escapeHTML(title)}</title></head><body>${code}</body></html>`,
+      'text/html');
+    toast('💾 خروجی HTML'); return;
+  }
+  const html = `<!DOCTYPE html><html lang="fa"><head><meta charset="UTF-8"><title>${escapeHTML(title)}</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"><\/script>
+<style>body{background:#1e1e2e;color:#cdd6f4;font-family:system-ui,sans-serif;padding:20px;max-width:900px;margin:auto}
+h1{color:#89b4fa;font-size:20px;margin-bottom:16px}pre{background:#282a36;padding:16px;border-radius:8px;overflow:auto}
+code{font-family:Menlo,monospace;font-size:14px;line-height:1.6}</style></head>
+<body><h1>${escapeHTML(title)}</h1>
+<pre><code class="language-${lang}">${escapeHTML(code)}</code></pre>
+<script>hljs.highlightAll();<\/script></body></html>`;
+  downloadFile(`${title.replace(/\s+/g,'_')}.html`, html, 'text/html');
+  toast('💾 فایل ساخته شد');
+}
+function exportAll() {
+  downloadFile('codepad_' + new Date().toISOString().slice(0,10) + '.json',
+    JSON.stringify(notes, null, 2), 'application/json');
+  toast('📦 بکاپ دانلود شد');
+}
+function importFile() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const imported = JSON.parse(ev.target.result);
+        if (!Array.isArray(imported)) throw new Error('bad');
+        let count = 0;
+        imported.forEach(n => {
+          if (n.title && n.code !== undefined) {
+            if (!n.id || notes.find(x => x.id === n.id)) n.id = genId();
+            notes.push(n); count++;
+          }
+        });
+        persist(); renderList(); toast(`📥 ${count} کد اضافه شد`);
+      } catch(err) { alert('فایل معتبر نیست'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+function downloadFile(name, content, type) {
+  const blob = new Blob([content], {type});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// ============ TOAST ============
+let toastTimer;
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 1800);
+}
+
+// ============ AUTOSAVE ============
+setInterval(() => {
+  if (!currentId) return;
+  const n = notes.find(x => x.id === currentId);
+  if (!n) return;
+  const t = document.getElementById('title-input').value.trim();
+  const c = document.getElementById('code-input').value;
+  if (t !== n.title || c !== n.code) {
+    n.title = t || 'بدون عنوان';
+    n.lang = document.getElementById('lang-select').value;
+    n.code = c; n.updated = Date.now(); persist();
+  }
+}, 3000);
+
+// ============ INIT ============
+loadNotes();
+renderList();
+applyLayout();
+</script>
+</body>
+</html>
